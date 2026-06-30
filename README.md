@@ -17,41 +17,43 @@
 
 ## 셋업
 
-> Fork해서 쓰는 경우, 아래 Notion DB·토큰·시크릿은 **전부 본인 것**으로 새로 만들어야 한다.
+> Fork해서 쓰는 경우, 아래 Notion 토큰·DB·시크릿은 **전부 본인 것**으로 새로 만들어야 한다.
 
-### 1. Notion DB 생성
-새 데이터베이스를 만들고 **아래 속성을 정확한 이름·타입으로** 추가한다
-(select 옵션값 기초/중급/심화·daily/error·카테고리 표시명은 실행 시 자동 생성된다 — 속성 이름·타입만 맞추면 됨):
-
-| 속성 | 타입 |
-|---|---|
-| Title | 제목 (title) |
-| Date | 날짜 (date) |
-| Category | 선택 (select) |
-| Difficulty | 선택 (select) |
-| Question | 텍스트 (rich_text) |
-| Kind | 선택 (select) |
-
-> **자동 생성(권장)**: 위 스키마를 손으로 만들 필요 없이, 통합 토큰(2번 단계)을 준비하고
-> 부모 페이지 1개를 통합에 공유한 뒤 아래를 실행하면 DB가 스키마대로 생성된다:
-> ```
-> python -m src.pipeline --init-db --parent-page <PARENT_PAGE_ID>
-> ```
-> 출력된 `NOTION_DB_ID`를 `.env`/Secrets에 등록하면 끝(3번 DB 연결도 자동 적용됨).
-
-### 2. Notion 통합 토큰
+### 1. Notion 통합 토큰
 notion.so → Settings → Connections → 내부 통합(internal integration) 생성 →
-**Read/Insert content 권한 포함** → 토큰 = `NOTION_API_KEY`.
+**Read/Insert content 권한 포함** → 토큰 = `NOTION_API_KEY` (로컬은 `.env`에 먼저 넣어둔다).
 
-### 3. DB에 통합 연결
-위에서 만든 DB 우상단 `···` → Connections → 만든 통합 연결.
-(필수 — 안 하면 토큰이 DB에 접근 불가)
+### 2. Notion DB 생성 — 자동 (권장)
+1. Notion에서 **빈 페이지 1개**를 만들고, 그 페이지를 1번 통합에 공유한다
+   (페이지 우상단 `···` → Connections → 통합 선택).
+2. 페이지 URL `notion.so/{workspace}/{32자 hex}` 의 **32자** = 부모 페이지 id.
+3. 실행:
+   ```
+   python -m src.pipeline --init-db --parent-page <PARENT_PAGE_ID>
+   ```
+4. 출력되는 `NOTION_DB_ID`(와 data source id)를 확인한다. 부모 페이지 아래에 아래 스키마대로
+   DB가 생성되며, 통합은 부모를 통해 DB에 상속 접근하므로 **별도 DB 연결 불필요**.
 
-### 4. DB ID 확인
-DB를 풀페이지로 연 뒤 URL `notion.so/{workspace}/{32자 hex}?v=...` 에서
-`?v=` 앞 **32자** = `NOTION_DB_ID`.
+생성되는 속성 스키마(2025-09 Notion API):
 
-### 5. 키 주입
+| 속성 | 타입 | 비고 |
+|---|---|---|
+| Title | title | |
+| Date | date | |
+| Category | select | 10개 카테고리 표시명 옵션 |
+| Difficulty | select | 기초/중급/심화 |
+| Question | rich_text | |
+| Kind | select | daily/error |
+
+> **검증**: 명령이 `✓ DB 생성 완료 / NOTION_DB_ID=...`를 출력하고, Notion에서 부모 페이지 아래에
+> 위 6개 속성을 가진 DB가 보이면 성공.
+
+### 2′. (대안) 수동 생성
+자동을 안 쓰면, 새 DB를 만들어 위 표의 **속성 이름·타입을 그대로** 추가하고
+(우상단 `···` → Connections로 통합 연결), DB URL의 32자를 `NOTION_DB_ID`로 쓴다.
+(select 옵션값은 실행 시 자동 생성되므로 속성 이름·타입만 맞추면 됨.)
+
+### 3. 키 주입
 - 로컬: `.env.example` 복사 → `.env`에 `ANTHROPIC_API_KEY`, `NOTION_API_KEY`, `NOTION_DB_ID` 채우기.
 - CI: GitHub repo → Settings → Secrets and variables → Actions에 동일 3개 등록.
 - (선택) `SLACK_WEBHOOK_URL` — Slack Incoming Webhook. 설정 시 질문 push 활성, 미설정 시 자동 스킵.
