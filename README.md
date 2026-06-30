@@ -32,6 +32,13 @@
 | Question | 텍스트 (rich_text) |
 | Kind | 선택 (select) |
 
+> **자동 생성(권장)**: 위 스키마를 손으로 만들 필요 없이, 통합 토큰(2번 단계)을 준비하고
+> 부모 페이지 1개를 통합에 공유한 뒤 아래를 실행하면 DB가 스키마대로 생성된다:
+> ```
+> python -m src.pipeline --init-db --parent-page <PARENT_PAGE_ID>
+> ```
+> 출력된 `NOTION_DB_ID`를 `.env`/Secrets에 등록하면 끝(3번 DB 연결도 자동 적용됨).
+
 ### 2. Notion 통합 토큰
 notion.so → Settings → Connections → 내부 통합(internal integration) 생성 →
 **Read/Insert content 권한 포함** → 토큰 = `NOTION_API_KEY`.

@@ -101,12 +101,31 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dry-run", action="store_true", help="Notion 미연동, stdout 출력")
     p.add_argument("--mock", action="store_true", help="API 미호출, 픽스처로 경로 검증")
     p.add_argument("--publish", action="store_true", help="Notion DB에 실제 발행")
+    p.add_argument("--init-db", action="store_true", help="Notion DB를 스키마대로 생성(최초 1회)")
+    p.add_argument("--parent-page", default=None, help="--init-db: DB를 만들 부모 페이지 id(통합에 공유 필요)")
     p.add_argument("--category", default=None, help="카테고리 slug 고정(미지정 시 가중랜덤)")
     p.add_argument("--seed", type=int, default=None, help="RNG 시드(재현용)")
     args = p.parse_args(argv)
 
+    if args.init_db:
+        if not args.parent_page:
+            print("--init-db에는 --parent-page <PAGE_ID> 필요(통합에 공유된 페이지)", file=sys.stderr)
+            return 2
+        from src import notion_pub
+        try:
+            db = notion_pub.init_db(args.parent_page)
+        except Exception as e:  # noqa: BLE001
+            print(f"DB 생성 실패: {type(e).__name__}: {e}\n"
+                  "(부모 페이지가 통합에 공유됐는지, NOTION_API_KEY가 맞는지 확인)", file=sys.stderr)
+            return 1
+        sources = db.get("data_sources", [])
+        ds_id = sources[0]["id"] if sources else "(없음)"
+        print(f"✓ DB 생성 완료\n  NOTION_DB_ID={db.get('id', '')}\n  data source id={ds_id}\n"
+              "→ 위 NOTION_DB_ID를 .env / GitHub Secrets에 등록하세요.")
+        return 0
+
     if not (args.dry_run or args.mock or args.publish):
-        print("--dry-run | --mock | --publish 중 하나 필요", file=sys.stderr)
+        print("--dry-run | --mock | --publish | --init-db 중 하나 필요", file=sys.stderr)
         return 2
 
     md = run(dry_run=args.dry_run, category=args.category, seed=args.seed,

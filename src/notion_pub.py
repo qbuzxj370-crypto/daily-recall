@@ -50,6 +50,33 @@ def publish(item: dict, ctx: GenerationContext, date: str,
     )
 
 
+def _schema_properties() -> dict:
+    """init-db용 DB 속성 스키마(이름·타입). select 옵션은 미리 채워 둔다(자동생성에도 의존 가능)."""
+    return {
+        "Title": {"title": {}},
+        "Date": {"date": {}},
+        "Category": {"select": {"options": [{"name": taxonomy.display_name(s)} for s in taxonomy.SLUGS]}},
+        "Difficulty": {"select": {"options": [{"name": d} for d in taxonomy.DIFFICULTIES]}},
+        "Question": {"rich_text": {}},
+        "Kind": {"select": {"options": [{"name": "daily"}, {"name": "error"}]}},
+    }
+
+
+def init_db(parent_page_id: str, client=None,
+            title: str = "하루한문 (Daily Recall)") -> dict:
+    """부모 페이지 아래에 스키마대로 DB 생성(2025-09 API). 생성된 database 객체 반환.
+
+    부모 페이지는 통합(NOTION_API_KEY)에 공유돼 있어야 한다.
+    응답의 id=database id(=NOTION_DB_ID), data_sources[0].id=data source id.
+    """
+    client = client or _client()
+    return client.databases.create(
+        parent={"type": "page_id", "page_id": parent_page_id},
+        title=[{"type": "text", "text": {"content": title}}],
+        initial_data_source={"properties": _schema_properties()},
+    )
+
+
 def publish_error(message: str, date: str,
                   client=None, db_id: str | None = None) -> dict:
     """실패 알림 페이지(Kind=error). #7 알림 = Notion."""
