@@ -1,0 +1,35 @@
+name: daily-recall
+
+on:
+  schedule:
+    # cron은 UTC 기준. 22:00 UTC == 익일 07:00 KST (KST = UTC+9)
+    - cron: "0 22 * * *"
+  workflow_dispatch: {}   # 수동 실행(테스트)
+
+# 동시 실행 방지(중복 발행 방지 보조)
+concurrency:
+  group: daily-recall
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Publish daily question
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}   # 선택 — 미설정 시 슬랙 단계 자동 스킵
+        run: python -m src.pipeline --publish
