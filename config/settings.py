@@ -9,7 +9,7 @@ except ImportError:
     pass
 
 # --- 시크릿/외부 ---
-ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
 NOTION_DB_ID = os.environ.get("NOTION_DB_ID", "")
 # Notion 2025-09 API는 data source 단위로 쿼리/생성. 미설정 시 DB에서 자동 해석(단일 소스 가정).
@@ -18,12 +18,19 @@ NOTION_DATA_SOURCE_ID = os.environ.get("NOTION_DATA_SOURCE_ID", "")
 # Slack Incoming Webhook(선택). 미설정 시 슬랙 질문 push 자동 비활성.
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL", "")
 
-# --- 모델 (현행, 2026-06 기준) ---
-MODEL = os.environ.get("DR_MODEL", "claude-sonnet-4-6")
-# 폴백 모델: 기본 모델이 API 오류/검증 실패로 막히면 승계(동일 Anthropic, 추상화 없음).
-# 가용성↑·저비용 티어로 회복탄력성 확보. 기본 모델과 같으면 폴백 비활성.
-MODEL_FALLBACK = os.environ.get("DR_MODEL_FALLBACK", "claude-haiku-4-5")
-MAX_TOKENS = 2000
+# --- 모델 ---
+# provider:model 형식의 우선순위 체인. 새 공급자는 src/llm.py에 어댑터만 추가한다.
+# 예: gemini:gemini-3.6-flash,gemini:gemini-3.5-flash
+MODEL_CHAIN = os.environ.get(
+    "DR_MODEL_CHAIN",
+    "gemini:gemini-3.6-flash,gemini:gemini-3.5-flash",
+)
+# 한 모델에서 API/스키마/도메인 검증 실패 시 같은 모델로 시도할 횟수.
+GENERATION_ATTEMPTS_PER_MODEL = 2
+# Gemini 3.x flash는 thinking 토큰도 이 상한에 함께 잡히므로, 한국어 상세 답변이
+# 잘리지 않게 넉넉히 둔다. 하루 1회 배치라 헤드룸을 크게 잡아도 부담 없음
+# (상한일 뿐, 실제 사용량만큼만 과금).
+MAX_TOKENS = 10000
 
 # --- 타임존 (KST 하드코딩; cron은 UTC로 환산해 0 22 * * *) ---
 TIMEZONE = ZoneInfo("Asia/Seoul")
