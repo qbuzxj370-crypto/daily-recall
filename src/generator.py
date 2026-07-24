@@ -1,4 +1,7 @@
-"""generator: GenerationContext -> QAItem(JSON). forced tool use로 구조화 출력 보장.
+"""generator: GenerationContext -> QAItem(JSON).
+
+모델 API는 src.llm(공급자 포트)에 격리한다. 이 모듈은 공급자와 무관한 QAItem
+계약·프롬프트·도메인 검증과, 모델 체인 위의 재시도/폴백 루프만 가진다.
 
 QAItem 계약:
   {category, difficulty, question, concepts[], answer_core, answer_deep, follow_ups[]}
@@ -10,28 +13,27 @@ from __future__ import annotations
 from typing import Any
 
 from config import settings, taxonomy
+from src import llm
 from src.selector import GenerationContext
 
-# ---- QAItem JSON 스키마 (tool input_schema 겸 검증용) ----
+# ---- QAItem JSON 스키마 (구조화 출력 + 앱 검증용) ----
 QAITEM_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "category": {"type": "string", "enum": taxonomy.SLUGS},
         "difficulty": {"type": "string", "enum": taxonomy.DIFFICULTIES},
-        "question": {"type": "string", "minLength": 5},
-        "concepts": {"type": "array", "items": {"type": "string"}, "minItems": 1},
-        "answer_core": {"type": "string", "minLength": 10},
-        "answer_deep": {"type": "string", "minLength": 10},
+        "question": {"type": "string", "description": "면접 질문 본문"},
+        "concepts": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "description": "질문과 직접 관련된 핵심 키워드",
+        },
+        "answer_core": {"type": "string", "description": "2~4문장의 핵심 답변"},
+        "answer_deep": {"type": "string", "description": "원리, 오해, 중요성을 설명한 심화 답변"},
         "follow_ups": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["category", "difficulty", "question", "concepts",
-                 "answer_core", "answer_deep"],
-}
-
-_TOOL = {
-    "name": "emit_qaitem",
-    "description": "생성한 면접 질문/답안을 QAItem 구조로 반환한다.",
-    "input_schema": QAITEM_SCHEMA,
+    "required": ["category", "difficulty", "question", "concepts", "answer_core", "answer_deep"],
 }
 
 SYSTEM_PROMPT = (
@@ -46,7 +48,7 @@ SYSTEM_PROMPT = (
     "- 코드 예시가 필요하면 answer 문자열 안에 표준 마크다운 코드펜스(```언어)로 넣는다.\n"
     "- 표(markdown table, `| ... |` 문법)는 절대 쓰지 않는다. 비교·대조는 불릿 리스트"
     "('- 항목 → 설명' 형태)로 표현한다. (렌더러가 표를 지원하지 않아 깨진다.)\n"
-    "- 반드시 emit_qaitem 도구로만 결과를 반환한다."
+    "- 응답은 지정된 QAItem JSON 스키마만 따른다."
 )
 
 
@@ -93,58 +95,34 @@ def validate(item: dict) -> list[str]:
     return errs
 
 
-def _call_api(ctx: GenerationContext, model: str) -> dict:
-    import anthropic  # 지연 import: dry-run --mock 시 미설치여도 동작
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-    resp = client.messages.create(
-        model=model,
-        max_tokens=settings.MAX_TOKENS,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": build_user_prompt(ctx)}],
-        tools=[_TOOL],
-        tool_choice={"type": "tool", "name": "emit_qaitem"},
-    )
-    for block in resp.content:
-        if getattr(block, "type", None) == "tool_use" and block.name == "emit_qaitem":
-            return dict(block.input)
-    raise GenerationError("응답에 emit_qaitem tool_use 블록이 없음")
-
-
-def _generate_with(ctx: GenerationContext, model: str) -> dict:
-    """단일 모델로 생성 + 검증 + 1회 재시도. 실패 시 GenerationError 전파."""
-    last_errs: list[str] = []
-    for attempt in range(2):
-        item = _call_api(ctx, model)
-        # 컨텍스트가 정본 — 모델이 다른 값을 넣었으면 보정
-        item["category"] = ctx.category
-        item["difficulty"] = ctx.difficulty
-        last_errs = validate(item)
-        if not last_errs:
-            return item
-    raise GenerationError(f"스키마 검증 실패(재시도 후, {model}): {last_errs}")
-
-
-def _model_chain() -> list[str]:
-    chain = [settings.MODEL]
-    fb = settings.MODEL_FALLBACK
-    if fb and fb != settings.MODEL:
-        chain.append(fb)
-    return chain
-
-
 def generate(ctx: GenerationContext) -> dict:
-    """기본 모델 → 폴백 모델 순으로 QAItem 생성(각 모델 1회 재시도).
+    """모델 체인 순서로 QAItem 생성(각 모델 N회 재시도) → 실패 시 다음 모델로 폴백.
 
-    기본 모델이 API 오류/검증 실패로 모두 막히면 폴백 모델로 승계(동일 Anthropic SDK).
-    전 모델 실패 시 GenerationError 전파(스케줄러가 실패로 인지 → error 페이지).
+    한 모델에서 호출 오류/검증 실패가 GENERATION_ATTEMPTS_PER_MODEL회 반복되면
+    체인의 다음 모델로 승계한다. 전 모델 실패 시 GenerationError 전파
+    (스케줄러가 실패로 인지 → error 페이지).
     """
-    models = _model_chain()
-    last_exc: Exception | None = None
-    for i, model in enumerate(models):
-        try:
-            return _generate_with(ctx, model)
-        except Exception as e:  # noqa: BLE001 — 다음 모델로 폴백
-            last_exc = e
-            if i + 1 < len(models):
-                print(f"  [폴백] {model} 실패 → {models[i + 1]} 시도: {type(e).__name__}: {e}")
-    raise GenerationError(f"전 모델 실패: {type(last_exc).__name__}: {last_exc}")
+    targets = llm.model_chain()
+    reason = ""
+    for i, target in enumerate(targets):
+        for attempt in range(1, settings.GENERATION_ATTEMPTS_PER_MODEL + 1):
+            try:
+                item = llm.invoke_structured(
+                    target,
+                    system_prompt=SYSTEM_PROMPT,
+                    user_prompt=build_user_prompt(ctx),
+                    schema=QAITEM_SCHEMA,
+                )
+                # 선택기가 정본 — 모델이 다른 enum을 반환해도 신뢰하지 않는다.
+                item["category"] = ctx.category
+                item["difficulty"] = ctx.difficulty
+                errs = validate(item)
+                if not errs:
+                    return item
+                reason = "; ".join(errs)
+            except Exception as e:  # noqa: BLE001 — 다음 시도/모델로 승계
+                reason = f"{type(e).__name__}: {e}"
+            print(f"  [재시도] {target.label()} {attempt}/{settings.GENERATION_ATTEMPTS_PER_MODEL}: {reason}")
+        if i + 1 < len(targets):
+            print(f"  [폴백] {target.label()} 실패 → {targets[i + 1].label()}")
+    raise GenerationError(f"전 모델 생성 실패: {reason}")
