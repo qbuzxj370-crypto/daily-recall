@@ -6,14 +6,14 @@
 
 ## 동작
 1. selector — 카테고리 가중랜덤 + 난이도 가중랜덤 + 기출/시드/복습큐 로드
-2. generator — Anthropic API(forced tool use)로 QAItem JSON 생성·검증(1회 재시도 + 모델 폴백)
+2. generator — LangGraph 생성→검증 흐름과 LangChain Gemini 네이티브 JSON Schema 출력으로 QAItem 생성·검증(모델별 재시도 + 모델 체인 폴백)
 3. renderer — QAItem → 표준 마크다운 → Notion 블록
 4. notion_pub — Notion DB 페이지 생성 (멱등성: 오늘자 존재 시 스킵)
 5. slack_pub — 발행 직후 **질문+힌트+노션 링크만** 슬랙 push(답 미포함)
 
 ## 요구사항
 - Python 3.10+
-- Anthropic API 키 / Notion 통합 토큰 + DB. (Slack은 선택)
+- Gemini API 키 / Notion 통합 토큰 + DB. (Slack은 선택)
 
 ## 셋업
 
@@ -54,7 +54,7 @@ notion.so → Settings → Connections → 내부 통합(internal integration) �
 (select 옵션값은 실행 시 자동 생성되므로 속성 이름·타입만 맞추면 됨.)
 
 ### 3. 키 주입
-- 로컬: `.env.example` 복사 → `.env`에 `ANTHROPIC_API_KEY`, `NOTION_API_KEY`, `NOTION_DB_ID` 채우기.
+- 로컬: `.env.example` 복사 → `.env`에 `GEMINI_API_KEY`, `NOTION_API_KEY`, `NOTION_DB_ID` 채우기.
 - CI: GitHub repo → Settings → Secrets and variables → Actions에 동일 3개 등록.
 - (선택) `SLACK_WEBHOOK_URL` — Slack Incoming Webhook. 설정 시 질문 push 활성, 미설정 시 자동 스킵.
   웹훅은 워크스페이스·채널에 묶이므로 **각자 자기 Slack 앱에서 직접 발급**해야 한다(남의 웹훅 재사용 불가, URL 자체가 비밀이라 커밋 금지). 발급: api.slack.com/apps → Incoming Webhooks.
@@ -82,8 +82,8 @@ python -m src.pipeline --publish --category network   # 카테고리 고정
 - 60일간 repo 커밋이 없으면 예약 워크플로가 자동 비활성 → 아무 커밋이나 push하면 재개
 
 ## 조정 상수 (config/settings.py)
-- `MODEL`(기본 claude-sonnet-4-6, env `DR_MODEL`로 오버라이드)
-- `MODEL_FALLBACK`(기본 claude-haiku-4-5, env `DR_MODEL_FALLBACK`) — 기본 모델 실패 시 승계. 기본과 같게 두면 비활성
+- `MODEL_CHAIN`(기본 `gemini:gemini-3.6-flash,gemini:gemini-3.5-flash`, env `DR_MODEL_CHAIN`으로 오버라이드) — 모델별 재시도 후 다음 모델로 승계
+- `GENERATION_ATTEMPTS_PER_MODEL=2` — 같은 모델의 API/구조/도메인 검증 재시도 횟수
 - `difficulty_weights(count)` — 난이도 가중치
 - `PAST_QUESTIONS_CAP=15` — 기출 주입 상한
 - `SEED_FEWSHOT_K=2` — 시드 회전(스타일) few-shot 개수

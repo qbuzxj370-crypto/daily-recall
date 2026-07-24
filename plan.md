@@ -29,13 +29,14 @@ daily-recall/
     seed_questions.json  # [P1 리서치 산출] 카테고리별 시드 질문 (정적, repo 커밋)
   src/
     selector.py        # 카테고리 선택 + 난이도(가중랜덤) + 기출/복습큐 로드
-    generator.py       # Anthropic API → QAItem(JSON) 생성·검증
+    generator.py       # 공급자 독립 QAItem 계약·프롬프트·도메인 검증 + 재시도/폴백 루프
+    llm.py             # LangChain 공급자 어댑터(Gemini 구현, 이후 공급자 추가 경계)
     renderer.py        # QAItem(+복습큐) → 표준 마크다운 / Notion 블록
     notion_pub.py      # Notion DB 페이지 생성 (page 객체 반환 → url 추출)
     slack_pub.py       # [P4.5] Slack Incoming Webhook: 질문+힌트+노션링크 push (답 미포함)
     state.py           # Notion DB 쿼리 → 카테고리 카운트·기출목록·복습큐·오늘자 존재여부
     pipeline.py        # 오케스트레이션 (main entry, CLI)
-  .env                 # ANTHROPIC_API_KEY, NOTION_API_KEY, NOTION_DB_ID (커밋 금지; CI는 GH Secrets)
+  .env                 # GEMINI_API_KEY, NOTION_API_KEY, NOTION_DB_ID (커밋 금지; CI는 GH Secrets)
   requirements.txt
 ```
 
@@ -89,7 +90,7 @@ H1/H2/H3, 단락, bold, 인라인코드, 코드블록, 불릿(-), 구분선(---)
 - `CATEGORY_WEIGHTS`: 10개 전부 균등(1.0). 조정 명분 = 약점 보강만
 - `DIFFICULTY_WEIGHTS`: 카테고리 누적 출제수 → 난이도 **가중 랜덤**(단조 포화 버그 회피). 예: 0–2 → {기초:.7,중급:.3,심화:0}; 3–6 → {기초:.2,중급:.6,심화:.2}; 7+ → {기초:.1,중급:.3,심화:.6}. 심화로 쏠리되 기초·중급 섞여 자연 복습. (상수 조정 가능)
 - `PAST_QUESTIONS_CAP`: 프롬프트 주입 카테고리별 기출 상한(최근 N개). 프롬프트 팽창 방지
-- `MODEL` / `MODEL_FALLBACK`: 기본→폴백 모델 체인. 기본이 API 오류/검증 실패로 막히면 폴백 승계(동일 Anthropic SDK, 멀티프로바이더 추상화 없음). 같게 두면 단일 모델
+- `MODEL_CHAIN`: `provider:model` 형식의 우선순위 체인. 각 모델의 API/구조/도메인 검증 재시도 후 다음 모델로 승계. 현재 Gemini 어댑터만 구현하고, 새 공급자는 `src/llm.py`에 추가
 - `INCLUDE_FOLLOWUP = True`, `INCLUDE_REVIEW_QUEUE = True` (MVP 토글)
 - `REVIEW_LOOKBACK_DAYS = 7`
 - `OUTPUT_LANG = "ko"`: 본문은 **한국어 설명 + 기술용어 원문(영어) 허용**. 프롬프트·DoD에 강제
@@ -116,7 +117,7 @@ H1/H2/H3, 단락, bold, 인라인코드, 코드블록, 불릿(-), 구분선(---)
 - generator: 프롬프트(시스템=출제자 역할, 유저=context) → QAItem JSON 반환, 스키마 검증·1회 재시도
 - renderer.to_markdown(): design.md 템플릿대로 렌더
 - 산출물: `python pipeline.py --dry-run` → 카테고리 선택→QAItem→마크다운 stdout. dry-run은 콜드스타트(빈 상태)로 Notion 미연동 실행. 실제 Notion 읽기 결선은 P3
-- 확인거리(📋): 현행 Anthropic 모델명·메시지 포맷·max_tokens·rate limit (product-self-knowledge로 검증)
+- 확인거리(📋): 현행 Gemini 모델명·구조화 출력·rate limit (공식 문서로 검증)
 - 의존: seed_questions.json 필요 → P1 시드 리서치 선행
 
 ### Phase 3: Notion 연동 (발행 + 상태 읽기)
@@ -138,7 +139,7 @@ H1/H2/H3, 단락, bold, 인라인코드, 코드블록, 불릿(-), 구분선(---)
 ### Phase 4.5: 슬랙 질문 전달 (질문 push / 답 pull)
 - 구현: `slack_pub.py`(Incoming Webhook), `renderer`에 슬랙 블록 빌더(질문 전용), pipeline 발행 직후 결선
 - 슬랙 페이로드 = Block Kit: header(`{date} · {표시명} · {난이도}`) + section(질문) + section(관련개념 힌트) + "먼저 스스로 답하라" + **actions 버튼(노션 page url)**. **답안 3종(`answer_core`/`answer_deep`/`follow_ups`) 미포함**
-- 전송: `httpx`로 webhook POST(새 의존 없음 — anthropic/notion-client가 httpx 보유), timeout 10s, 응답 `"ok"` 확인. **실패는 경고 로그 후 진행**(노션 정본 무사)
+- 전송: `httpx`로 webhook POST, timeout 10s, 응답 `"ok"` 확인. **실패는 경고 로그 후 진행**(노션 정본 무사)
 - 결선: `_publish_flow`에서 `page = publisher(...)` 직후 `if settings.SEND_SLACK: slack_pub.send_question(item, ctx, page["url"])`
 - 멱등성: 노션 멱등 스킵 시 슬랙도 미전송(이미 발행된 날은 재전송 안 함)
 - 확인거리: Slack Block Kit section 3000자 한도(트렁케이트), webhook URL=GH Secrets
@@ -163,7 +164,7 @@ H1/H2/H3, 단락, bold, 인라인코드, 코드블록, 불릿(-), 구분선(---)
 |---|---|---|
 | P1 | 시드 코퍼스 수집(출처 추적 필수) | 🔍 |
 | P1.5 | ~~시드 generator 용법~~ → **확정: 회전 few-shot** (`selector.py`/`generator.py`) | ✅ |
-| P2 | Anthropic API 현행 스펙 | 📋 |
+| P2 | Gemini API 현행 스펙 | 📋 |
 | P3 | md→Notion 라이브러리 현황 | 🔍(경) |
 | P3 | Notion API 현행 스펙(rich_text 2000자·code language enum) | 📋 |
 | P4 | GH Actions cron 제약·시크릿 | 📋 |
