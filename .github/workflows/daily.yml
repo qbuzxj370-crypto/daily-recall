@@ -28,7 +28,7 @@ jobs:
 
       - name: Publish daily question
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}   # 선택 — 미설정 시 슬랙 단계 자동 스킵
