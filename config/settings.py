@@ -27,7 +27,10 @@ MODEL_CHAIN = os.environ.get(
 )
 # 한 모델에서 API/스키마/도메인 검증 실패 시 같은 모델로 시도할 횟수.
 GENERATION_ATTEMPTS_PER_MODEL = 2
-MAX_TOKENS = 2000
+# Gemini 3.x flash는 thinking 토큰도 이 상한에 함께 잡히므로, 한국어 상세 답변이
+# 잘리지 않게 넉넉히 둔다. 하루 1회 배치라 헤드룸을 크게 잡아도 부담 없음
+# (상한일 뿐, 실제 사용량만큼만 과금).
+MAX_TOKENS = 10000
 
 # --- 타임존 (KST 하드코딩; cron은 UTC로 환산해 0 22 * * *) ---
 TIMEZONE = ZoneInfo("Asia/Seoul")
